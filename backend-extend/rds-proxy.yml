@@ -1,0 +1,94 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'RDS proxy'
+
+Parameters:
+  DatabaseSecretArn:
+    Type: String
+    Default: 'arn:aws:secretsmanager:eu-west-2:999999999:secret:x'
+  DatabaseSecurityGroupId:
+    Type: String
+    Default: 'sg-'
+  VpcSubnetIdOne:
+    Type: String
+    Default: 'subnet-'
+  VpcSubnetIdTwo:
+    Type: String
+    Default: 'subnet-'
+
+
+
+Resources:
+  SecurityGroupIngressFromSelf:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Ingress from rds proxy in the same security group
+      GroupId: !Ref DatabaseSecurityGroupId
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+      SourceSecurityGroupId: !Ref DatabaseSecurityGroupId
+
+  DBProxy:
+    Type: AWS::RDS::DBProxy
+    Properties:
+      Auth: 
+        - IAMAuth: DISABLED
+          AuthScheme: SECRETS
+          SecretArn: !Ref DatabaseSecretArn
+      DBProxyName: !Sub "${AWS::StackName}-01"
+      EngineFamily: MYSQL
+      IdleClientTimeout: 120
+      RequireTLS: true
+      RoleArn: !GetAtt DBProxyRole.Arn
+      VpcSecurityGroupIds: 
+        - !Ref DatabaseSecurityGroupId
+      VpcSubnetIds: 
+        - !Ref VpcSubnetIdOne
+        - !Ref VpcSubnetIdTwo
+
+  DBProxyTargetGroup:
+    Type: AWS::RDS::DBProxyTargetGroup
+    Properties:
+      DBProxyName: !Ref DBProxy
+      DBInstanceIdentifiers:
+        - rds
+      TargetGroupName: default
+      ConnectionPoolConfigurationInfo:
+        MaxConnectionsPercent: 100
+        MaxIdleConnectionsPercent: 50
+        ConnectionBorrowTimeout: 120
+
+  DBProxyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: sts:AssumeRole
+            Principal:
+              Service:
+                - rds.amazonaws.com
+      Policies:
+        - PolicyName: !Sub "${AWS::StackName}-policy"
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref DatabaseSecretArn
+              - Effect: Allow
+                Action: kms:Decrypt
+                Resource: !Ref DatabaseSecretArn
+                Condition: 
+                  StringEquals: 
+                      kms:ViaService: "secretsmanager.${AWS::Region}.amazonaws.com"
+
+
+Outputs:
+  DBProxyEndpoint:
+    Description: RDS cluster proxy endpoint
+    Value: !GetAtt 'DBProxy.Endpoint'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'DBProxyEndpoint' ] ]

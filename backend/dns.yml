@@ -1,0 +1,23 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Route 53 hosted zone for subdomains of sohail.online
+Parameters:
+  BackendDomainName:
+    Description: 'backend.sohail.online'
+    Type: String
+    Default: backend.sohail.online
+Resources:
+  BackendHostedZone: 
+    Type: "AWS::Route53::HostedZone"
+    Properties: 
+      Name: !Ref BackendDomainName
+ 
+Outputs:
+  BackendHostedZoneId:
+    Value: !Ref  BackendHostedZone
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'BackendHostedZoneId' ] ]
+  BackendHostedZoneNameServers:
+    Value: !Join [ '  ', !GetAtt BackendHostedZone.NameServers ]
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'BackendHostedZoneNameServers' ] ]

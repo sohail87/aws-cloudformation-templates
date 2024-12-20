@@ -1,0 +1,281 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'RDS Aurora Serverless PostgreSQL'
+
+Metadata:
+  'AWS::CloudFormation::Interface':
+    ParameterGroups:
+    - Label:
+        default: 'Parent Stacks'
+      Parameters:
+      - ParentVPCStack
+      - ParentSecretStack
+    - Label:
+        default: 'RDS Parameters'
+      Parameters:
+      - EngineVersion
+      - DBSnapshotIdentifier
+      - DBName
+      - DBBackupRetentionPeriod
+      - EnableDataApi
+    - Label:
+        default: 'Serverless Parameters'
+      Parameters:
+      - AutoPause
+      - MaxCapacity
+      - MinCapacity
+      - SecondsUntilAutoPause
+
+Parameters:
+  ParentVPCStack:
+    Description: 'Stack name of parent VPC stack'
+    Type: String
+    Default: sohail-alpha-vpc
+  ParentSecretStack:
+    Description: 'Stack name of parent secret stack'
+    Type: String
+    Default: sohail-alpha-secrets
+  DBSnapshotIdentifier:
+    Description: 'Optional identifier for the DB cluster snapshot from which you want to restore (leave blank to create an empty cluster).'
+    Type: String
+    Default: ''
+  DBName:
+    Description: 'Name of the database (ignored when DBSnapshotIdentifier is set, value used from snapshot).'
+    Type: String
+    Default: 'sohaildata'
+  DBBackupRetentionPeriod:
+    Description: 'The number of days to keep snapshots of the cluster.'
+    Type: Number
+    MinValue: 1
+    MaxValue: 35
+    Default: 30
+  EnableDataApi:
+    Description: 'Enable the Data API (https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/data-api.html).'
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'false'
+  AutoPause:
+    Description: 'Enable automatic pause for a Serverless Aurora cluster. A cluster can be paused only when it has no connections. If a cluster is paused for more than seven days, the cluster might be backed up with a snapshot. In this case, the cluster is restored when there is a request to connect to it.'
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'true'
+  MaxCapacity:
+    Description: 'The maximum capacity units for a Serverless Aurora cluster.'
+    Type: String
+    Default: '2'
+  MinCapacity:
+    Description: 'The minimum capacity units for a Serverless Aurora cluster.'
+    Type: String
+    Default: '0.5'
+  SecondsUntilAutoPause:
+    Description: 'The time, in seconds, before a Serverless Aurora cluster is paused.'
+    Type: Number
+    MinValue: 1
+    MaxValue: 86400
+    Default: 300
+  EngineVersion:
+    Description: 'Aurora Serverless PostgreSQL version.'
+    Type: String
+    Default: '13.7'
+Conditions:
+  HasNotDBSnapshotIdentifier: !Equals [!Ref DBSnapshotIdentifier, '']
+  HasDBSnapshotIdentifier: !Not [!Condition HasNotDBSnapshotIdentifier]
+
+Resources:
+  ClusterSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupName: !Sub ${AWS::StackName}-security-group
+      GroupDescription: Allow access to the database from other security groups
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 5432
+        ToPort: 5432
+        Description: Allow fargate containers to access RDS db
+        SourceSecurityGroupId: 
+          Fn::ImportValue:
+            !Join [':', [!Ref 'ParentVPCStack', 'FargateContainerSecurityGroup']]
+      - IpProtocol: tcp
+        FromPort: 5432
+        ToPort: 5432
+        Description: Allow lambda to access RDS db
+        SourceSecurityGroupId: 
+          Fn::ImportValue:
+            !Join [':', [!Ref 'ParentVPCStack', 'LambdaSecurityGroup']]
+      - IpProtocol: tcp
+        FromPort: 5432
+        ToPort: 5432
+        Description: Allow bastion host ec2 to access RDS db
+        SourceSecurityGroupId: 
+          Fn::ImportValue:
+            !Join [':', [!Ref 'ParentVPCStack', 'BastionHostSecurityGroup']]
+      - IpProtocol: tcp
+        FromPort: 5432
+        ToPort: 5432
+        Description: Allow NLB in Private Subnet One to access RDS db
+        CidrIp: 10.0.2.0/24
+      - IpProtocol: tcp
+        FromPort: 5432
+        ToPort: 5432
+        Description: Allow NLB in Private Subnet Two to access RDS db
+        CidrIp: 10.0.3.0/24
+      VpcId: 
+          Fn::ImportValue:
+            !Join [':', [!Ref 'ParentVPCStack', 'VPCId']]
+
+  ClusterSecurityGroupIngressFromSelf:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Ingress from rds proxy in the same security group
+      GroupId: !Ref 'ClusterSecurityGroup'
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+      SourceSecurityGroupId: !Ref 'ClusterSecurityGroup'
+
+  DBSubnetGroup:
+    Type: 'AWS::RDS::DBSubnetGroup'
+    Properties:
+      DBSubnetGroupName: !Sub ${AWS::StackName}
+      DBSubnetGroupDescription: Private Subnet One and Private Subnet Two
+      SubnetIds:
+        - Fn::ImportValue:
+            !Join [':', [!Ref 'ParentVPCStack', 'PrivateSubnetOne']]
+        - Fn::ImportValue:
+            !Join [':', [!Ref 'ParentVPCStack', 'PrivateSubnetTwo']]
+
+  DBClusterParameterGroup:
+    Type: 'AWS::RDS::DBClusterParameterGroup'
+    Properties:
+      DBClusterParameterGroupName: !Sub ${AWS::StackName}
+      Description: !Ref 'AWS::StackName'
+      Family: aurora-postgresql13
+      Parameters:
+        client_encoding: 'UTF8'
+
+  DBCluster:
+    Type: 'AWS::RDS::DBCluster'
+    DeletionPolicy: Snapshot # default
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBClusterIdentifier: !Sub ${AWS::StackName}-cluster
+      BackupRetentionPeriod: !Ref DBBackupRetentionPeriod
+      DatabaseName: !If [HasDBSnapshotIdentifier, !Ref 'AWS::NoValue', !Ref DBName]
+      DBClusterParameterGroupName: !Ref DBClusterParameterGroup
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      EnableHttpEndpoint: !Ref EnableDataApi
+      Engine: aurora-postgresql
+      EngineMode: provisioned
+      EngineVersion: !Ref EngineVersion
+      MasterUsername: !If 
+      - HasDBSnapshotIdentifier
+      - !Ref 'AWS::NoValue'
+      - '{{resolve:secretsmanager:sohail-alpha-secrets-db:SecretString:username}}'
+      MasterUserPassword: !If
+      - HasDBSnapshotIdentifier
+      - !Ref 'AWS::NoValue'
+      - '{{resolve:secretsmanager:sohail-alpha-secrets-db:SecretString:password}}'
+      ServerlessV2ScalingConfiguration:
+        MaxCapacity: !Ref MaxCapacity
+        MinCapacity: !Ref MinCapacity
+      SnapshotIdentifier: !If [HasDBSnapshotIdentifier, !Ref DBSnapshotIdentifier, !Ref 'AWS::NoValue']
+      StorageEncrypted: true
+      VpcSecurityGroupIds:
+      - !Ref ClusterSecurityGroup
+
+  DBInstance:
+    DependsOn: DBCluster
+    Type: 'AWS::RDS::DBInstance'
+    Properties:
+      DBClusterIdentifier: !Sub ${AWS::StackName}-cluster
+      DBInstanceIdentifier: !Sub ${AWS::StackName}-instance
+      DBInstanceClass: "db.serverless"
+      Engine: aurora-postgresql
+      EngineVersion: "13.7"
+
+  DBProxy:
+    Type: AWS::RDS::DBProxy
+    Properties:
+      Auth: 
+        - IAMAuth: DISABLED
+          AuthScheme: SECRETS
+          SecretArn: 
+            Fn::ImportValue:
+                !Join [':', [!Ref 'ParentSecretStack', 'DatabaseSecretArn']]
+      DBProxyName: !Sub "${AWS::StackName}-proxy-01"
+      EngineFamily: POSTGRESQL
+      IdleClientTimeout: 120
+      RequireTLS: true
+      RoleArn: !GetAtt DBProxyRole.Arn
+      VpcSecurityGroupIds: 
+        - !Ref ClusterSecurityGroup
+      VpcSubnetIds: 
+        - Fn::ImportValue:
+            !Join [':', [!Ref 'ParentVPCStack', 'PrivateSubnetOne']]
+        - Fn::ImportValue:
+            !Join [':', [!Ref 'ParentVPCStack', 'PrivateSubnetTwo']]
+
+  DBProxyTargetGroup:
+    Type: AWS::RDS::DBProxyTargetGroup
+    Properties:
+      DBProxyName: !Ref DBProxy
+      DBClusterIdentifiers:
+        - !Ref DBCluster
+      TargetGroupName: default
+      ConnectionPoolConfigurationInfo:
+        MaxConnectionsPercent: 100
+        MaxIdleConnectionsPercent: 50
+        ConnectionBorrowTimeout: 120
+
+  DBProxyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-rds-proxy-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: sts:AssumeRole
+            Principal:
+              Service:
+                - rds.amazonaws.com
+      Policies:
+        - PolicyName: !Sub "${AWS::StackName}-rds-proxy-policy"
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  Fn::ImportValue:
+                      !Join [':', [!Ref 'ParentSecretStack', 'DatabaseSecretArn']]
+              - Effect: Allow
+                Action: kms:Decrypt
+                Resource:
+                  Fn::ImportValue:
+                      !Join [':', [!Ref 'ParentSecretStack', 'DatabaseSecretArn']]
+                Condition: 
+                  StringEquals: 
+                      kms:ViaService: "secretsmanager.${AWS::Region}.amazonaws.com"
+
+
+Outputs:
+  ClusterName:
+    Description: 'The name of the cluster.'
+    Value: !Ref DBCluster
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'ClusterName' ] ]
+  DNSName:
+    Description: 'The connection endpoint for the DB cluster.'
+    Value: !GetAtt 'DBCluster.Endpoint.Address'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'DNSName' ] ]
+  SecurityGroupId:
+    Description: 'The security group used to manage access to RDS Aurora Serverless Postgres.'
+    Value: !Ref ClusterSecurityGroup
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'SecurityGroupId' ] ]
+  DBProxyEndpoint:
+    Description: RDS cluster proxy endpoint
+    Value: !GetAtt 'DBProxy.Endpoint'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'DBProxyEndpoint' ] ]

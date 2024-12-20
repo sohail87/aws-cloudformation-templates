@@ -1,0 +1,492 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Description: IAM resources to allow github actions to deploy cloudformation
+Parameters:
+  GitHubOrg:
+    Description: Name of GitHub organization/user (case sensitive)
+    Type: String
+    Default: ""
+  AwsAccountId:
+    Description: The AWS account github can deploy to
+    Type: String
+    Default: ""
+Resources:
+  GithubRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: github-actions-role
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action: sts:AssumeRoleWithWebIdentity
+            Principal:
+              Federated: !Ref GithubOidc
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubOrg}/*
+      ManagedPolicyArns:
+      - !Ref CloudFormationPolicy
+      - !Ref IamPolicy
+      - !Ref SimpleStorePolicy
+      - !Ref ServerlessComputePolicy
+      - !Ref CloudwatchAndConfigPolicy
+      - !Ref NetworkingAndContainerPolicy
+
+  GithubOidc:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: 
+        - sts.amazonaws.com
+      ThumbprintList:
+        - xxx
+
+  CloudFormationPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Run a cloudformation template
+      Path: /
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - cloudformation:CreateStack
+          - cloudformation:DescribeStacks
+          - cloudformation:CreateChangeSet
+          - cloudformation:DescribeChangeSet
+          - cloudformation:DeleteChangeSet
+          - cloudformation:ExecuteChangeSet
+          Resource: "*"
+
+  IamPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: deploy any IAM related resources
+      Path: /
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - "iam:GetOpenIDConnectProvider"
+          - "iam:CreateOpenIDConnectProvider"
+          - "iam:UpdateOpenIDConnectProviderThumbprint"
+          - "iam:TagOpenIDConnectProvider"
+          - "iam:List*"
+          - "iam:GetAccount*"
+          - "iam:GetServiceLastAccessedDetails"
+          - "iam:GetCredentialReport"
+          - "iam:GetContextKeysForCustomPolicy"
+          - "iam:GetServiceLastAccessedDetailsWithEntities"
+          - "iam:Generate*"
+          - "iam:SimulateCustomPolicy"
+          - "iam:UpdateAccountPasswordPolicy"
+          - "iam:CreateAccountAlias"
+          - "iam:CreateServiceLinkedRole"
+          - "iam:*Policy"
+          - "iam:DeleteRole"
+          Resource: "*"
+        - Effect: Allow
+          Action:
+          - "iam:Get*"
+          - "iam:Create*"
+          - "iam:Update*"
+          - "iam:Put*"
+          - "iam:Add*"
+          - "iam:Remove*"
+          - "iam:Attach*"
+          - "iam:Detach*"
+          - "iam:Upload*"
+          - "iam:SimulatePrincipalPolicy"
+          - "iam:ChangePassword"
+          - "iam:Tag*"
+          - "iam:Untag*"
+          - "iam:PassRole"
+          - "iam:ResetServiceSpecificCredential"
+          - "iam:SetDefaultPolicyVersion"
+          Resource: !Sub "arn:aws:iam::${AwsAccountId}:role/*"
+        - Effect: Allow
+          Action:
+          - "cognito-idp:AdminAddUserToGroup"
+          - "cognito-idp:AdminConfirmSignUp"
+          - "cognito-idp:AdminCreateUser"
+          - "cognito-idp:AdminEnableUser"
+          - "cognito-idp:AdminGet*"
+          - "cognito-idp:AdminList*"
+          - "cognito-idp:Create*"
+          - "cognito-idp:Describe*"
+          - "cognito-idp:Get*"
+          - "cognito-idp:List*"
+          - "cognito-idp:Set*"
+          - "cognito-idp:StartUserImportJob"
+          - "cognito-idp:TagResource"
+          - "cognito-idp:UntagResource"
+          - "cognito-idp:Update*"
+          - "cognito-idp:Verify*"
+          - "cognito-idp:Delete*"
+          Resource: "*"
+
+  SimpleStorePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: deploy any IAM related resources
+      Path: /
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - "SNS:*"
+          Resource: "*"
+        - Effect: Allow
+          Action:
+          - "s3:GetAccountPublicAccessBlock"
+          - "s3:PutAccountPublicAccessBlock"
+          - "s3:ListAllMyBuckets"
+          - "s3:HeadBucket"
+          - "s3:List*"
+          - "s3:Get*"
+          - "s3:Put*"
+          - "s3:CreateBucket"
+          - "s3:Delete*"
+          Resource: "*"
+        - Effect: Allow
+          Action:
+          - "s3:DeleteObjectTagging"
+          - "s3:DeleteObjectVersionTagging"
+          - "s3:Get*"
+          - "s3:Put*"
+          - "s3:Replicate*"
+          - "s3:RestoreObject"
+          - "s3:ListMultipartUploadParts"
+          - "s3:ObjectOwnerOverrideToBucketOwner"
+          - "s3:AbortMultipartUpload"
+          Resource: !Sub "arn:aws:s3:::*/*"
+        - Effect: Allow
+          Action:
+          - "rds:AddTags*"
+          - "rds:DeleteDBProxy*"
+          - "rds:DeleteDBClusterParameterGroup"
+          - "rds:DeregisterDBProxyTargets"
+          - "rds:Describe*"
+          - "rds:CreateCustomAvailabilityZone"
+          - "rds:CreateDBProxy*"
+          - "rds:ListTags*"
+          - "rds:ModifyCertificates"
+          - "rds:ModifyDBProxy*"
+          - "rds:RegisterDBProxyTargets"
+          - "rds:StartExportTask"
+          - "rds:RebootDBInstance"
+          Resource: "*"
+        - Effect: Allow
+          Action:
+          - "rds:Add*"
+          - "rds:ListTagsForResource"
+          - "rds:DeleteDBSubnetGroup"
+          - "rds:DeleteDBCluster"
+          - "rds:DeleteDBInstance"
+          - "rds:ApplyPendingMaintenanceAction"
+          - "rds:Create*"
+          - "rds:Modify*"
+          - "rds:StartDBCluster"
+          - "rds:Remove*"
+          - "rds:StartDBInstanceAutomatedBackupsReplication"
+          - "rds:StartActivityStream"
+          - "rds:StartDBInstance"
+          - "rds-data:*Transaction"
+          - "rds-data:*Statement"
+          Resource: !Sub "arn:aws:rds:*:${AwsAccountId}:*:*"
+
+  ServerlessComputePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Run lambda or api gateway
+      Path: /
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - "apigateway:UpdateRestApiPolicy"
+          - "apigateway:PUT"
+          - "apigateway:PATCH"
+          - "apigateway:POST"
+          - "apigateway:GET"
+          - "apigateway:SetWebACL"
+          - "apigateway:TagResource"
+          - "apigateway:DELETE"
+          Resource: "arn:aws:apigateway:*::*"
+        - Effect: Allow
+          Action:
+          - "lambda:CreateEventSourceMapping"
+          - "lambda:Get*"
+          - "lambda:List*"
+          - "lambda:*Permission"
+          - "lambda:Create*"
+          - "lambda:EnableReplication"
+          - "lambda:DeleteFunctionEventInvokeConfig"
+          - "lambda:Invoke*"
+          - "lambda:Publish*"
+          - "lambda:Put*"
+          - "lambda:TagResource"
+          - "lambda:UntagResource"
+          - "lambda:Update*"
+          - "lambda:Delete*"
+
+          - "cloudfront:UpdateDistribution"
+          - "cloudfront:List*"
+          - "cloudfront:Get*"
+          - "cloudfront:Create*"
+          - "cloudfront:Update*"
+          - "cloudfront:TagResource"
+          - "cloudfront:UntagResource"
+          - "cloudfront:DescribeFunction"
+          - "cloudfront:PublishFunction"
+          - "cloudfront:Delete*"
+          - "wafv2:*"
+          Resource: "*"
+
+
+  CloudwatchAndConfigPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: deploy any IAM related resources
+      Path: /
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - "events:Describe*"
+          - "events:List*"
+          - "events:PutPermission"
+          - "events:PutEvents"
+          - "events:RemovePermission"
+          - "events:TestEventPattern"
+          Resource: "*"
+        - Effect: Allow
+          Action:
+          - "events:Put*"
+          - "events:EnableRule"
+          - "events:DisableRule"
+          - "events:RemoveTargets"
+          - "events:TagResource"
+          - "events:UntagResource"
+          Resource: !Sub "arn:aws:events:*:${AwsAccountId}:rule/*"
+        - Effect: Allow
+          Action:
+          - "secretsmanager:*ResourcePolicy"
+          - "secretsmanager:UntagResource"
+          - "secretsmanager:GetSecretValue"
+          - "secretsmanager:DescribeSecret"
+          - "secretsmanager:PutSecretValue"
+          - "secretsmanager:TagResource"
+          - "secretsmanager:UpdateSecret"
+          - "secretsmanager:CreateSecret"
+          - "secretsmanager:DeleteSecret"
+          Resource: !Sub "arn:aws:secretsmanager:*:${AwsAccountId}:secret:*"
+        - Effect: Allow
+          Action:
+          - "secretsmanager:GetRandomPassword"
+          Resource: "*"
+
+  NetworkingAndContainerPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: deploy any networking or container related resources
+      Path: /
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - "ec2:Accept*"
+          - "ec2:Allocate*"
+          - "ec2:Assign*"
+          - "ec2:Associate*"
+          - "ec2:Attach*"
+          - "ec2:Authorize*"
+          - "ec2:CopyImage"
+          - "ec2:Create*"
+          - "ec2:DeleteNetworkAcl*"
+          - "ec2:DeleteNetworkInterface"
+          - "ec2:DeleteSecurityGroup"
+          - "ec2:Describe*"
+          - "ec2:DetachVolume"
+          - "ec2:Enable*"
+          - "ec2:Import*"
+          - "ec2:Modify*"
+          - "ec2:Provision*"
+          - "ec2:ReplaceIamInstanceProfileAssociation"
+          - "ec2:ReplaceNetworkAcl*"
+          - "ec2:Revoke*"
+          - "ec2:*Instances"
+          - "ec2:UpdateSecurity*"
+          - "ec2:*Tags"
+          - "ec2:Get*"
+          - "ec2:Search*"
+
+          - "ecr:CreateRepository"
+          - "ecr:DescribeRegistry"
+          - "ecr:Get*"
+          - "ecr:PutReplicationConfiguration"
+          - "ecr:PutRegistryPolicy"
+          - "ecr:DeleteRegistryPolicy"
+          - "ecr:BatchGetImage"
+
+          - "ecs:CreateCluster"
+          - "ecs:*TaskDefinition"
+
+          - "ec2:AssociateRouteTable"
+          - "ec2:CreateFlowLogs"
+          - "ec2:CreateNatGateway"
+          - "ec2:CreateNetworkInterface"
+          - "ec2:CreateSubnet"
+          - "ec2:DescribeSubnets"
+          - "ec2:DescribeVpc*"
+          - "ec2:DisassociateRouteTable"
+          - "ec2:ModifySubnetAttribute"
+          - "ec2:ReplaceNetworkAclAssociation"
+          - "ec2:ReplaceRouteTableAssociation"
+          - "ec2:*Tags"
+
+          - "acm:DescribeCertificate"
+          - "acm:DeleteCertificate"
+          - "acm:AddTagsToCertificate"
+          - "acm:ImportCertificate"
+          - "acm:List*"
+          - "acm:RequestCertificate"
+
+          - "ssm:DeleteAssociation"
+          - "ssm:Describe*"
+          - "ssm:Create*"
+
+          - "route53:ListReusableDelegationSets"
+          - "route53:ListTrafficPolicyInstances"
+          - "route53:ListHostedZones"
+          - "route53:ListHostedZonesByName"
+          - "route53:ListHealthChecks"
+          - "route53:ListTrafficPolicies"
+          - "route53:ListGeoLocations"
+          - "route53:GetTrafficPolicyInstanceCount"
+          - "route53:GetAccountLimit"
+          - "route53:GetCheckerIpRanges"
+          - "route53:GetGeoLocation"
+          - "route53:GetHostedZoneCount"
+          - "route53:GetHealthCheckCount"
+          - "route53:CreateHealthCheck"
+          - "route53:CreateHostedZone"
+          - "route53:CreateReusableDelegationSet"
+          - "route53:CreateTrafficPolicy"
+          - "route53:DisassociateVPCFromHostedZone"
+          - "route53:TestDNSAnswer"
+
+          - "elasticloadbalancing:Describe*"
+          - "elasticloadbalancing:Create*"
+          - "elasticloadbalancing:Modify*"
+          - "elasticloadbalancing:AddTags"
+          - "elasticloadbalancing:RemoveTags"
+          - "elasticloadbalancing:SetSecurityGroups"
+          - "elasticloadbalancing:Delete*"
+          - "elasticloadbalancing:RegisterTargets"
+          - "elasticloadbalancing:DeregisterTargets"
+          Resource: "*"
+        - Effect: Allow
+          Action:
+          - "ecr:BatchCheckLayerAvailability"
+          - "ecr:CompleteLayerUpload"
+          - "ecr:Describe*"
+          - "ecr:Get*"
+          - "ecr:InitiateLayerUpload"
+          - "ecr:List*"
+          - "ecr:PutImage"
+          - "ecr:PutImageTagMutability"
+          - "ecr:PutLifecyclePolicy"
+          - "ecr:ReplicateImage"
+          - "ecr:SetRepositoryPolicy"
+          - "ecr:TagResource"
+          - "ecr:UntagResource"
+          - "ecr:UploadLayerPart"
+          Resource: !Sub "arn:aws:ecr:*:${AwsAccountId}:repository/*"
+        - Effect: Allow
+          Action:
+          - "ecs:UpdateService"
+          - "ecs:List*"
+          - "ecs:Create*"
+          - "ecs:Describe*"
+          - "ecs:TagResource"
+          - "ecs:UntagResource"
+          - "ecs:DeleteService"
+          - "ecs:PutClusterCapacityProviders"
+          - "ecs:DeleteCluster"
+          Resource: 
+          - !Sub "arn:aws:ecs:*:${AwsAccountId}:service/*"
+          - !Sub "arn:aws:ecs:*:${AwsAccountId}:task-definition/*"
+          - !Sub "arn:aws:ecs:*:${AwsAccountId}:cluster/*"
+        - Effect: Allow
+          Action:
+          - "acm:DescribeCertificate"
+          - "acm:ExportCertificate"
+          - "acm:GetCertificate"
+          - "acm:ImportCertificate"
+          - "acm:RemoveTagsFromCertificate"
+          - "acm:RenewCertificate"
+          - "acm:ResendValidationEmail"
+          - "acm:UpdateCertificateOptions"
+          Resource: 
+          - !Sub "arn:aws:ecs:*:${AwsAccountId}:certificate/*"
+        - Effect: Allow
+          Action:
+          - "route53:ListTrafficPolicyVersions"
+          - "route53:ListTagsForResource"
+          - "route53:ListTagsForResources"
+          - "route53:ListTrafficPolicyInstancesByPolicy"
+          - "route53:ListResourceRecordSets"
+          - "route53:ListQueryLoggingConfigs"
+          - "route53:ListTrafficPolicyInstancesByHostedZone"
+          - "route53:ListVPCAssociationAuthorizations"
+          - "route53:GetChange"
+          - "route53:GetHostedZone"
+          - "route53:GetHealthCheck"
+          - "route53:GetTrafficPolicyInstance"
+          - "route53:GetQueryLoggingConfig"
+          - "route53:GetHealthCheckLastFailureReason"
+          - "route53:GetHealthCheckStatus"
+          - "route53:GetReusableDelegationSetLimit"
+          - "route53:GetReusableDelegationSet"
+          - "route53:GetHostedZoneLimit"
+          - "route53:GetTrafficPolicy"
+          - "route53:CreateVPCAssociationAuthorization"
+          - "route53:CreateTrafficPolicyInstance"
+          - "route53:CreateTrafficPolicyVersion"
+          - "route53:CreateQueryLoggingConfig"
+          - "route53:UpdateHealthCheck"
+          - "route53:UpdateHostedZoneComment"
+          - "route53:UpdateTrafficPolicyComment"
+          - "route53:UpdateTrafficPolicyInstance"
+          - "route53:ChangeResourceRecordSets"
+          - "route53:ChangeTagsForResource"
+          - "route53:AssociateVPCWithHostedZone"
+          - "route53:DeleteVPCAssociationAuthorization"
+          - "route53:DeleteTrafficPolicy"
+          - "route53:DeleteReusableDelegationSet"
+          - "route53:DeleteHostedZone"
+          - "route53:DeleteHealthCheck"
+          - "route53:DeleteQueryLoggingConfig"
+          - "route53:DeleteTrafficPolicyInstance"
+          Resource:
+          - "arn:aws:route53:::hostedzone/*"
+          - "arn:aws:route53:::trafficpolicyinstance/*"
+          - "arn:aws:route53:::healthcheck/*"
+          - "arn:aws:route53:::change/*"
+          - "arn:aws:route53:::trafficpolicy/*"
+          - "arn:aws:route53:::queryloggingconfig/*"
+          - "arn:aws:route53:::delegationset/*"
+
+
+Outputs:
+  GithubRole:
+    Value: !GetAtt GithubRole.Arn 

@@ -1,0 +1,29 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Certs for subdomains of sohail.online
+Parameters:
+  BackendDomainName:
+    Description: 'backend.sohail.online'
+    Type: String
+    Default: backend.sohail.online
+  ParentDnsStack:
+    Type: String
+    Default: sohail-app-dns
+    Description: The name of the parent DNS stack.
+Resources:
+  BackendCertificate: 
+    Type: "AWS::CertificateManager::Certificate"
+    Properties: 
+      DomainName: !Sub '${BackendDomainName}'
+      ValidationMethod: DNS
+      DomainValidationOptions:
+      - DomainName: !Ref BackendDomainName
+        HostedZoneId:
+          Fn::ImportValue:
+            !Join [':', [!Ref 'ParentDnsStack', 'BackendHostedZoneId']]
+ 
+Outputs:
+  BackendCertificateArn:
+    Value: !Ref BackendCertificate
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'BackendCertificateArn' ] ]

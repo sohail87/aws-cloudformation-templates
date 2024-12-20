@@ -1,0 +1,72 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Description: VPC service endpoint and NLB to database
+Parameters:
+  VpcId:
+    Type: String
+    Default: vpc-
+  VpcSubnetIdOne:
+    Type: String
+    Default: 'subnet-'
+  VpcSubnetIdTwo:
+    Type: String
+    Default: 'subnet-'
+  ProxyIpOne:
+    Type: String
+    Default: '10.1.1.1'
+  ProxyIpTwo:
+    Type: String
+    Default: '10.1.1.1'
+Resources:
+  NlbRdsProxyTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${AWS::StackName}-nlb-tg
+      TargetType: ip
+      Port: 3306
+      Protocol: TCP
+      VpcId: !Ref VpcId
+      Targets:
+      - Id: !Ref ProxyIpOne
+        Port: 3306
+      - Id: !Ref ProxyIpTwo
+        Port: 3306
+
+  NlbRdsProxy:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub ${AWS::StackName}-nlb
+      Scheme: internal
+      Type: network
+      Subnets:
+        - !Ref VpcSubnetIdOne
+        - !Ref VpcSubnetIdTwo
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-nlb
+    DependsOn: NlbRdsProxyTargetGroup
+  
+  NlbRdsProxyListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    DependsOn:
+      - NlbRdsProxy
+    Properties:
+      DefaultActions:
+        - TargetGroupArn: !Ref 'NlbRdsProxyTargetGroup'
+          Type: 'forward'
+      LoadBalancerArn: !Ref 'NlbRdsProxy'
+      Port: 5432
+      Protocol: TCP
+
+  VSE:
+    Type: 'AWS::EC2::VPCEndpointService'
+    Properties:
+      AcceptanceRequired: true
+      NetworkLoadBalancerArns:
+        - !Ref NlbRdsProxy
+  VSEPermissions:
+    Type: AWS::EC2::VPCEndpointServicePermissions
+    Properties:
+      ServiceId: !GetAtt VSE.ServiceId
+      AllowedPrincipals:
+        - !Sub "arn:aws:iam::999999999999:root"

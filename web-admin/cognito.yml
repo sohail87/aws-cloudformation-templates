@@ -1,0 +1,85 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Create a cognito signin/signup for website'
+Parameters:
+  Prefix:
+    Type: String
+    Default: sohail-app-admin
+    
+  WebsiteUrl:
+    Type: String
+    Default: https://admin.sohail.online
+    
+  SigninPath:
+    Type: String
+    Default: signin
+    
+  SignoutPath:
+    Type: String
+    Default: signout
+
+Resources:
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      AutoVerifiedAttributes:
+        - email
+      UsernameAttributes:
+        - email
+      UserPoolName: !Sub ${Prefix}-user-pool
+      Schema:
+        - AttributeDataType: String
+          Mutable: true
+          Name: name
+          Required: true
+          
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      AccessTokenValidity: 60 # (minutes) default value.
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows:
+        - code
+        - implicit
+      AllowedOAuthScopes:
+        - aws.cognito.signin.user.admin
+        - email
+        - openid
+        - phone
+        - profile
+      CallbackURLs:
+        - !Sub "${WebsiteUrl}/${SigninPath}"
+      ClientName: !Sub ${Prefix}-user-pool-client
+      EnableTokenRevocation: true # default value.
+      ExplicitAuthFlows:
+        - ALLOW_CUSTOM_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_SRP_AUTH
+      IdTokenValidity: 60 # (minutes) default value.
+      LogoutURLs:
+        - !Sub "${WebsiteUrl}/${SignoutPath}"
+      PreventUserExistenceErrors: ENABLED # default value.
+      RefreshTokenValidity: 30 # (days) default value.
+      SupportedIdentityProviders:
+        - COGNITO
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+      UserPoolId: !Ref UserPool
+      
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Sub ${Prefix}
+      UserPoolId: !Ref UserPool
+
+Outputs:
+  CognitoUserPoolID:
+    Value: !Ref UserPool
+    Description: The UserPool ID
+  CognitoAppClientID:
+    Value: !Ref UserPoolClient
+    Description: The app client
+  HostedUIURL:
+    Value: !Sub https://${Prefix}.auth.us-west-2.amazoncognito.com/login?client_id=${UserPoolClient}&response_type=code&scope=email+openid+phone+profile&redirect_uri=${WebsiteUrl}
+    Description: The hosted UI URL

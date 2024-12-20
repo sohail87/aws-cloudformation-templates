@@ -1,0 +1,49 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Create a WAF for api gateway'
+Parameters:
+  ParentApiStack:
+    Type: String
+    Default: sohail-app-api
+Resources:
+  WafWebAcl:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: !Sub "${AWS::StackName}"
+      Description: WAF Web ACL for api gateway
+      Scope: REGIONAL
+      DefaultAction:
+        Allow: {}
+      VisibilityConfig:
+        CloudWatchMetricsEnabled: true
+        MetricName: !Sub "${AWS::StackName}"
+        SampledRequestsEnabled: true
+      Rules:
+        - Name: common-rule
+          Priority: 0
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+              ExcludedRules: []
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            SampledRequestsEnabled: true
+            MetricName: !Sub "${AWS::StackName}-common-rule"
+
+  WafWebAclAssociation:
+    Type: 'AWS::WAFv2::WebACLAssociation'
+    Properties:
+      WebACLArn: !GetAtt WafWebAcl.Arn
+      ResourceArn: 
+        !Sub 
+          - 'arn:aws:apigateway:${AWS::Region}::/restapis/${ApiId}/stages/v1'
+          - ApiId: 
+              Fn::ImportValue:
+                !Join [':', [!Ref 'ParentApiStack', 'RestApiId']]
+Outputs:
+  WafWebAclArn:
+    Value: !GetAtt WafWebAcl.Arn
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'WafWebAclArn' ] ]

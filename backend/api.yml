@@ -1,0 +1,194 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Internal api
+Transform: AWS::Serverless-2016-10-31
+#=====================================================================================================================
+Parameters:
+  ParentVPCStackName:
+    Type: String
+    Default: sohail-alpha-vpc
+    Description: The name of the parent VPC networking stack that you created.
+  Environment:
+    Description: production, testing or development
+    Type: String
+    Default: production
+#=====================================================================================================================
+Resources:
+
+  LogsManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub ${AWS::StackName}-logs
+      Description: "Create Logs"
+      Path: "/"
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - logs:CreateLogGroup
+          - logs:CreateLogStream
+          - logs:PutLogEvents
+          Resource: arn:aws:logs:*:*:*
+
+  SharedLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-lambda-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref LogsManagedPolicy
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Path: "/"
+
+  StartTaskLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-task-start
+      Code:
+        ZipFile: |
+          exports.handler = async (event) => {
+            console.info(`Lying about creating books lambda event: ${JSON.stringify(event)}`)
+            const response = {
+              body: JSON.stringify(event.body),
+              statusCode: 201
+            }
+            return response
+          }
+      Handler: index.handler
+      Runtime: nodejs14.x
+      Role: !GetAtt SharedLambdaExecutionRole.Arn
+      MemorySize: 128
+      Timeout: 60
+      # Environment:
+      #   Variables:
+      #     KeepWarm: !Ref KeepWarmEnabled
+      # VpcConfig:
+      #   SecurityGroupIds:
+      #     - Ref: LambdaVpcSecurityGroup
+      #   SubnetIds:
+      #     - Fn::ImportValue:
+      #         !Join [':', [!Ref 'ParentVPCStack', 'PrivateSubnetOne']]
+      #     - Fn::ImportValue:
+      #         !Join [':', [!Ref 'ParentVPCStack', 'PrivateSubnetTwo']]
+    DependsOn:
+    - SharedLambdaExecutionRole
+
+
+  # LambdaVpcSecurityGroup:
+  #     Type: AWS::EC2::SecurityGroup
+  #     Properties:
+  #        GroupDescription: !Sub ${AWS::StackName}-security-group
+  #        VpcId: 
+  #          Fn::ImportValue:
+  #            !Join [':', [!Ref 'ParentVPCStack', 'VPCId']]
+#=====================================================================================================================
+
+  ApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-apigateway-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: apigateway.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Policies:
+      - PolicyName:
+          Fn::Sub: "${AWS::StackName}-gateway-policy"
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource: "*"
+          - Effect: Allow
+            Action:
+            - lambda:*
+            Resource:
+            - !GetAtt StartTaskLambda.Arn
+
+  Api:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub "${AWS::StackName}-api"
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowHeaders:
+          - Authorization
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowOrigins:
+          - '*'
+
+  StartTaskIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref Api
+      IntegrationType: AWS_PROXY
+      IntegrationUri: 
+        !Sub 
+        - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${StartTaskLambdaArn}/invocations
+        - { "StartTaskLambdaArn" : {"Fn::GetAtt":[ "StartTaskLambda","Arn"]}}
+      IntegrationMethod: POST
+      PayloadFormatVersion: '2.0'
+
+
+  StartTaskRoute:
+    Type: AWS::ApiGatewayV2::Route
+    DependsOn:
+      - StartTaskIntegration
+    Properties:
+      ApiId: !Ref Api
+      RouteKey: 'POST /task-start'
+      AuthorizationType: NONE
+      Target: !Join
+        - /
+        - - integrations
+          - !Ref StartTaskIntegration
+
+  ApiDeployment:
+    Type: AWS::ApiGatewayV2::Deployment
+    DependsOn:
+      - StartTaskRoute
+    Properties:
+      ApiId: !Ref Api
+
+  V1Stage:
+    Type: AWS::ApiGatewayV2::Stage
+    DependsOn:
+      - Api
+      - ApiDeployment
+    Properties:
+      StageName: v1
+      AutoDeploy: true
+      Description: v1 Stage
+      DeploymentId: !Ref ApiDeployment
+      ApiId: !Ref Api
+
+  ApiGatewayInvokePermissionForStartTaskLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt StartTaskLambda.Arn
+      Principal: apigateway.amazonaws.com
+
+#=====================================================================================================================
+
+Outputs: {}

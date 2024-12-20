@@ -1,0 +1,23 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Route 53 hosted zone for subdomain admin.sohail.online
+Parameters:
+  AnalyticsDomainName:
+    Description: 'admin.sohail.online'
+    Type: String
+    Default: admin.sohail.online
+Resources:
+  AdminHostedZone: 
+    Type: "AWS::Route53::HostedZone"
+    Properties: 
+      Name: !Ref AdminDomainName
+ 
+Outputs:
+  AdminHostedZoneId:
+    Value: !Ref  AdminHostedZone
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'AdminHostedZoneId' ] ]
+  AdminHostedZoneNameServers:
+    Value: !Join [ ' ', !GetAtt AdminHostedZone.NameServers ]
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'AdminHostedZoneNameServers' ] ]

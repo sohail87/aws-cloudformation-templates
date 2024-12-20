@@ -1,0 +1,35 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Create a cloudfront dist for website'
+Parameters: {}
+Resources:
+  WafWebAcl:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: !Sub "${AWS::StackName}"
+      Description: WAF Web ACL for static website on cloudfront
+      Scope: CLOUDFRONT
+      DefaultAction:
+        Allow: {}
+      VisibilityConfig:
+        CloudWatchMetricsEnabled: true
+        MetricName: !Sub "${AWS::StackName}"
+        SampledRequestsEnabled: true
+      Rules:
+        - Name: common-rule
+          Priority: 0
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+              ExcludedRules: []
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            SampledRequestsEnabled: true
+            MetricName: !Sub "${AWS::StackName}-common-rule"
+Outputs:
+  WafWebAclArn:
+    Value: !GetAtt WafWebAcl.Arn
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'WafWebAclArn' ] ]

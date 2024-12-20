@@ -1,0 +1,13 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Description: ECR for api
+Resources:
+  ECRAPI:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub ${AWS::StackName}
+      ImageTagMutability: MUTABLE
+ 
+Outputs:
+  ECRAPI:
+    Value: !Ref ECRAPI

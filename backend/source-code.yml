@@ -1,0 +1,51 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Source code on Amazon S3.'
+Parameters:
+  PipelineRole:
+    Type: String
+    Description: 'The AWS role that will need access to upload files at build/deploy time'
+    Default: github-actions-role
+Resources:
+  S3BucketForSourceCode:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${AWS::StackName}
+      AccessControl: Private
+      BucketEncryption:
+        ServerSideEncryptionConfiguration: 
+        - ServerSideEncryptionByDefault: 
+            SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls : true
+        IgnorePublicAcls : true
+        BlockPublicPolicy : true
+        RestrictPublicBuckets : true
+      VersioningConfiguration:
+        Status: Enabled
+
+  S3BucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref S3BucketForSourceCode
+      PolicyDocument:
+        Id: SourceCodeAccessPolicy
+        Version: "2012-10-17"
+        Statement:
+          - Action: "s3:ListBucket"
+            Effect: Allow
+            Resource: !Sub 'arn:aws:s3:::${S3BucketForSourceCode}'
+            Principal:
+              AWS: !Join ['', ["arn:aws:iam::", !Ref AWS::AccountId, ":role/", !Ref PipelineRole]]
+          - Action: 
+            - s3:GetObject
+            - s3:DeleteObject
+            - s3:PutObject
+            Effect: Allow
+            Resource: !Sub 'arn:aws:s3:::${S3BucketForSourceCode}/*'
+            Principal:
+              AWS: !Join ['', ["arn:aws:iam::", !Ref AWS::AccountId, ":role/", !Ref PipelineRole ]]
+Outputs:
+  BucketName:
+    Value: !Ref 'S3BucketForSourceCode'
+    Description: Name of S3 bucket to hold source code content

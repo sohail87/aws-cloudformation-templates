@@ -1,0 +1,63 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Description: sns notifications for ecs tasks start and stop
+Parameters:
+  ParentClusterStackName:
+    Type: String
+    Default: sohail-alpha-fargate-cluster
+    Description: The name of the parent Fargate stack that you created.
+Resources:
+  Topic:
+    Type: "AWS::SNS::Topic"
+    Properties:
+      TopicName: !Sub ${AWS::StackName}-topic
+  TopicPolicy:
+    Type: "AWS::SNS::TopicPolicy"
+    Properties:
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "events.amazonaws.com"
+            Action: "sns:Publish"
+            Resource: !Ref Topic
+      Topics:
+        - !Ref Topic
+
+  TopicPrimaryEmailSubscription:
+    Type: "AWS::SNS::Subscription"
+    Properties:
+      Protocol: "email"
+      TopicArn: !Ref Topic
+      Endpoint: "sohaildeen73@gmail.com"
+  
+  TopicSecondaryEmailSubscription:
+    Type: "AWS::SNS::Subscription"
+    Properties:
+      Protocol: "email"
+      TopicArn: !Ref Topic
+      Endpoint: ""
+
+  EcsTaskStateChangeEventBridgeRule:
+    Type: "AWS::Events::Rule"
+    Properties:
+      Name: !Sub ${AWS::StackName}-rule-ecs-task-state-change
+      Description: "Rule to publich ECS Task State Change events for a specific cluster to a SNS topic"
+      EventPattern:
+        source:
+          - "aws.ecs"
+        detail-type:
+          - "ECS Task State Change"
+        detail:
+          clusterArn:
+            - Fn::ImportValue:
+                !Join [':', [!Ref 'ParentClusterStackName', 'ClusterArn']]
+          lastStatus:
+            - "PENDING"
+            - "STOPPED"
+      Targets:
+        - Arn: !Ref Topic
+          Id: !GetAtt Topic.TopicName
+ 
+Outputs: {}

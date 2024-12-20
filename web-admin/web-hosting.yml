@@ -1,0 +1,70 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Create a website hosted on Amazon S3.'
+Parameters:
+  PipelineRole:
+    Type: String
+    Description: 'The AWS role that will need access to upload website files at build/deploy time'
+    Default: github-actions-role
+  HostedZoneId:
+    Type: String
+    Default: "XXX999"
+Resources:
+  S3BucketForWebsite:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: admin.sohail.online
+      BucketEncryption:
+        ServerSideEncryptionConfiguration: 
+        - ServerSideEncryptionByDefault: 
+            SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls : true
+        IgnorePublicAcls : true
+        BlockPublicPolicy : false
+        RestrictPublicBuckets : false
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        RoutingRules:
+          - RoutingRuleCondition:
+              HttpErrorCodeReturnedEquals: '404'
+            RedirectRule:
+              ReplaceKeyWith: index.html
+
+  S3BucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref S3BucketForWebsite
+      PolicyDocument:
+        Id: WebsiteAccessPolicy
+        Version: "2012-10-17"
+        Statement:
+          - Action: "s3:ListBucket"
+            Effect: Allow
+            Resource: !Sub 'arn:aws:s3:::${S3BucketForWebsite}'
+            Principal:
+              AWS: !Join ['', ["arn:aws:iam::", !Ref AWS::AccountId, ":role/", !Ref PipelineRole]]
+          - Action: 
+            - s3:GetObject
+            - s3:DeleteObject
+            - s3:PutObject
+            Effect: Allow
+            Resource: !Sub 'arn:aws:s3:::${S3BucketForWebsite}/*'
+            Principal:
+              AWS: !Join ['', ["arn:aws:iam::", !Ref AWS::AccountId, ":role/", !Ref PipelineRole ]]
+          - Action: 
+            - s3:GetObject
+            Effect: Allow
+            Resource: !Sub 'arn:aws:s3:::${S3BucketForWebsite}/*'
+            Principal: '*'
+
+Outputs:
+  WebsiteURL:
+    Value: !GetAtt S3BucketForWebsite.WebsiteURL
+    Description: The URL of the newly created website
+  WebsiteRegionalDomainName:
+    Value: !GetAtt S3BucketForWebsite.RegionalDomainName
+    Description: The URL of the newly created website
+  BucketName:
+    Value: !Ref 'S3BucketForWebsite'
+    Description: Name of S3 bucket to hold website content

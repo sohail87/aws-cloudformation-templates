@@ -1,0 +1,288 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Public api
+#=====================================================================================================================
+Parameters:
+  ParentVPCStack:
+    Type: String
+    Default: sohail-alpha-vpc
+    Description: The name of the parent VPC networking stack.
+  ParentDnsStack:
+    Type: String
+    Default: sohail-app-dns
+    Description: The name of the parent DNS stack.
+  ParentDbStack:
+    Type: String
+    Default: sohail-alpha-database
+    Description: The name of the parent database stack
+  BackendHostedZoneId:
+    Type: String
+    Default: XXX999
+    Description: The name of the parent DNS stack.
+  CodeVersion:
+    Description: part of the file path in s3
+    Type: String
+#=====================================================================================================================
+Resources:
+
+  LogsManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub ${AWS::StackName}-logs-policy
+      Description: "Create Logs"
+      Path: "/"
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - logs:CreateLogGroup
+          - logs:CreateLogStream
+          - logs:PutLogEvents
+          Resource: arn:aws:logs:*:*:*
+
+  SharedLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-lambda-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref LogsManagedPolicy
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Path: "/"
+
+  VerifyLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-verify
+      Code:
+        S3Bucket: sohail-app-source-code
+        S3Key: !Sub ${AWS::StackName}/${CodeVersion}/verify.zip
+      Handler: app.handler
+      Runtime: nodejs14.x
+      Role: !GetAtt SharedLambdaExecutionRole.Arn
+      MemorySize: 128
+      Timeout: 60
+      Environment:
+        Variables:
+          DB_HOST:
+            Fn::ImportValue:
+              !Join [':', [!Ref 'ParentDbStack', 'DBProxyEndpoint']]
+          DB_PORT: "5432"
+          DB_DATABASE: '{{resolve:secretsmanager:sohail-alpha-secrets-db:SecretString:dbname}}'
+          DB_USERNAME: '{{resolve:secretsmanager:sohail-alpha-secrets-db:SecretString:username}}'
+          DB_PASSWORD: '{{resolve:secretsmanager:sohail-alpha-secrets-db:SecretString:password}}'
+      VpcConfig:
+        SecurityGroupIds:
+          - Fn::ImportValue:
+              !Join [':', [!Ref 'ParentVPCStack', 'LambdaSecurityGroup']]
+        SubnetIds:
+          - Fn::ImportValue:
+              !Join [':', [!Ref 'ParentVPCStack', 'PrivateSubnetOne']]
+          - Fn::ImportValue:
+              !Join [':', [!Ref 'ParentVPCStack', 'PrivateSubnetTwo']]
+    DependsOn:
+    - SharedLambdaExecutionRole
+
+  ApiGatewayInvokePermissionForVerifyLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt VerifyLambda.Arn
+      Principal: apigateway.amazonaws.com
+#=====================================================================================================================
+
+  ApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-apigateway-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: apigateway.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Policies:
+      - PolicyName:
+          Fn::Sub: "${AWS::StackName}-gateway-policy"
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource: "*"
+          - Effect: Allow
+            Action:
+            - lambda:InvokeFunction
+            Resource:
+            - !GetAtt VerifyLambda.Arn
+
+  RestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Name: !Sub "${AWS::StackName}-api"
+
+  Deployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - Method
+    Properties:
+      RestApiId: !Ref RestApi
+
+  Stage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      DeploymentId: !Ref Deployment
+      RestApiId: !Ref RestApi
+      StageName: "v1"
+
+
+  Resource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: !Sub "verify"
+      RestApiId: !Ref RestApi
+
+
+  Method:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      HttpMethod: POST
+      Integration:
+        ConnectionType: INTERNET
+        Credentials: !GetAtt ApiRole.Arn
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: 
+          !Sub 
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${VerifyLambdaArn}/invocations
+          - { "VerifyLambdaArn" : {"Fn::GetAtt":[ "VerifyLambda","Arn"]}}
+      ResourceId: !Ref Resource
+      RestApiId: !Ref RestApi
+
+  VerifyBackendCertificate: 
+    Type: "AWS::CertificateManager::Certificate"
+    Properties: 
+      DomainName: !Sub 'verify.backend.sohail.online'
+      ValidationMethod: DNS
+      DomainValidationOptions:
+      - DomainName: !Sub 'verify.backend.sohail.online'
+        HostedZoneId: !Ref BackendHostedZoneId
+
+  ApiCustomDomain:
+    DependsOn:
+      - VerifyBackendCertificate
+    Type: 'AWS::ApiGateway::DomainName'
+    Properties:
+      DomainName: verify.backend.sohail.online
+      EndpointConfiguration: 
+        Types: 
+        - REGIONAL
+      RegionalCertificateArn: !Ref VerifyBackendCertificate
+
+  ApiDomainMapping:
+    DependsOn:
+      - ApiCustomDomain
+    Type: 'AWS::ApiGateway::BasePathMapping'
+    Properties:
+      DomainName: !Ref ApiCustomDomain
+      RestApiId: !Ref RestApi
+      Stage: !Ref Stage
+
+  ApiDnsAlias:
+    Type: AWS::Route53::RecordSetGroup
+    Properties:
+      HostedZoneId: !Ref BackendHostedZoneId
+      RecordSets:
+      - Name: verify.backend.sohail.online
+        Type: A
+        AliasTarget:
+          HostedZoneId: !GetAtt ApiCustomDomain.RegionalHostedZoneId
+          DNSName: !GetAtt ApiCustomDomain.RegionalDomainName
+
+  OptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      RestApiId:
+        Ref: RestApi
+      ResourceId:
+        Ref: Resource
+      HttpMethod: OPTIONS
+      Integration:
+        IntegrationResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+            method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+            method.response.header.Access-Control-Allow-Origin: "'*'"
+          ResponseTemplates:
+            application/json: ''
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        Type: MOCK
+      MethodResponses:
+      - StatusCode: 200
+        ResponseModels:
+          application/json: 'Empty'
+        ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: false
+            method.response.header.Access-Control-Allow-Methods: false
+            method.response.header.Access-Control-Allow-Origin: false
+
+  ApiKey: 
+    Type: AWS::ApiGateway::ApiKey
+    Properties: 
+      Name: !Sub "${AWS::StackName}-api-key"
+      Enabled: true
+  ApiUsagePlan:
+    Type: "AWS::ApiGateway::UsagePlan"
+    Properties:
+      ApiStages: 
+      - ApiId: !Ref RestApi
+        Stage: !Ref Stage     
+      Description: !Sub "${AWS::StackName}-api-usage-plan"
+      Quota:
+        Limit: 2000
+        Period: DAY
+      Throttle:
+        BurstLimit: 100
+        RateLimit: 100
+      UsagePlanName: !Sub "${AWS::StackName}-api-usage-plan"
+  ApiUsagePlanKey:
+    Type: "AWS::ApiGateway::UsagePlanKey"
+    Properties:
+      KeyId: !Ref ApiKey
+      KeyType: API_KEY
+      UsagePlanId: !Ref ApiUsagePlan
+
+#=====================================================================================================================
+
+Outputs:
+  RestApiId:
+    Value: !Ref RestApi
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'RestApiId' ] ]
+  StageName:
+    Value: !Ref Stage
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'StageName' ] ]
